@@ -1,0 +1,56 @@
+<div class="container">
+    <h1>BTC/USD Live Chart</h1>
+    <p class="subtitle">Timeframe: 1 ora</p>
+    
+    <div id="status" class="status">Inizializzazione...</div>
+    <div id="error" class="error" style="display:none;"></div>
+    
+    <div id="content">
+        <div class="info-box">
+            <div class="info-grid">
+                <div class="info-item">
+                    <label>Prezzo Attuale</label>
+                    <span id="currentPrice">Caricamento...</span>
+                </div>
+                <div class="info-item">
+                    <label>Massimo</label>
+                    <span id="highPrice">-</span>
+                </div>
+                <div class="info-item">
+                    <label>Minimo</label>
+                    <span id="lowPrice">-</span>
+                </div>
+                <div class="info-item">
+                    <label>Apertura</label>
+                    <span id="openPrice">-</span>
+                </div>
+            </div>
+        </div>
+
+        <canvas id="chartCanvas"></canvas>
+
+        <div class="stats">
+            <h2>Statistiche Trendline</h2>
+            <div class="stat-row">
+                <div class="color-box green"></div>
+                <span>Trendline Bullish (Verde): <span id="bullishCount">0</span></span>
+            </div>
+            <div class="stat-row">
+                <div class="color-box red"></div>
+                <span>Trendline Bearish (Rosse): <span id="bearishCount">0</span></span>
+            </div>
+            <div class="update-time" id="updateTime"></div>
+        </div>
+
+        <button onclick="fetchData()">🔄 Aggiorna Dati</button>
+        <button onclick="testAPI()">🔧 Test Connessione API</button>
+    </div>
+</div>
+
+<div id="notificationOverlay" style="display:none;">
+    <div id="notification-box">
+        <h3>🔔 Notifiche</h3>
+        <p>Vuoi consentire a questa applicazione di inviarti notifiche?</p>
+<button onclick="enableNotifications()">Consenti</button>
+    </div>
+  </div>
