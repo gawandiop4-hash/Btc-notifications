@@ -1,3 +1,4 @@
+
 let candles = [];
 let trendlines = [];
 let supportResistanceLevels = [];
@@ -35,6 +36,7 @@ let slowMA = [];
 let volumeProfileLines = [];
 let wakeLock = null;
 let keepAliveVideo = null;
+let audioPlaying = false;
 
 const CHART_API = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=280';
 const RSI_API = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=30m&limit=100';
@@ -142,6 +144,10 @@ document.addEventListener('visibilitychange', async function () {
     if (wakeLock === null && !keepAliveVideo) {
       await requestWakeLock();
     }
+    
+    if (audioPlaying && !alertAudio) {
+      playAlertSound();
+    }
   }
 });
 
@@ -185,7 +191,8 @@ function showTestNotification() {
   if (Notification.permission === 'granted') {
     new Notification('Sistema Notifiche Attivo', {
       body: 'Le notifiche sono state abilitate correttamente',
-      silent: true
+      silent: false,
+      requireInteraction: false
     });
   }
 }
@@ -436,7 +443,7 @@ function createAlertSound() {
     gainNode.connect(audioContext.destination);
     oscillator.frequency.value = 800;
     oscillator.type = 'square';
-    gainNode.gain.value = 0.3;
+    gainNode.gain.value = 0.5;
 
     return {
       audioContext: audioContext,
@@ -457,16 +464,21 @@ function playAlertSound() {
   alertAudio = createAlertSound();
   if (!alertAudio) return;
 
+  audioPlaying = true;
   alertAudio.oscillator.start();
   var toggle = true;
 
   alertAudio.interval = setInterval(function () {
-    alertAudio.oscillator.frequency.value = toggle ? 800 : 1000;
-    toggle = !toggle;
+    if (alertAudio && alertAudio.oscillator) {
+      alertAudio.oscillator.frequency.value = toggle ? 800 : 1000;
+      toggle = !toggle;
+    }
   }, 300);
 }
 
 function stopAlertSound() {
+  audioPlaying = false;
+  
   if (alertAudio) {
     try {
       clearInterval(alertAudio.interval);
@@ -488,20 +500,20 @@ function showRSIAlert(level) {
   var icon = '';
 
   if (level === 82) {
-    title = '2 ATTENZIONE 2';
-    body = 'RSI livello critico: ' + level;
+    title = '🔴 ATTENZIONE CRITICA';
+    body = 'RSI ha raggiunto il livello critico: ' + level;
     icon = String.fromCodePoint(0x1F534);
   } else if (level === 70) {
-    title = '1 ATTENZIONE 1';
-    body = 'RSI livello: ' + level;
+    title = '🟠 ATTENZIONE';
+    body = 'RSI ha raggiunto il livello: ' + level;
     icon = String.fromCodePoint(0x1F7E0);
   } else if (level === 30) {
-    title = '1 ATTENZIONE 1';
-    body = 'RSI livello: ' + level;
+    title = '🟢 ATTENZIONE';
+    body = 'RSI ha raggiunto il livello: ' + level;
     icon = String.fromCodePoint(0x1F7E2);
   } else if (level === 18) {
-    title = '2 ATTENZIONE 2';
-    body = 'RSI livello critico: ' + level;
+    title = '🟢 ATTENZIONE CRITICA';
+    body = 'RSI ha raggiunto il livello critico: ' + level;
     icon = String.fromCodePoint(0x1F7E2);
   }
 
@@ -513,13 +525,15 @@ function showRSIAlert(level) {
     }
 
     try {
-      currentNotification = new Notification(icon + ' ' + title, {
+      currentNotification = new Notification(title, {
         body: body,
-        tag: 'rsi-alert-' + level + '-' + Date.now(),
+        tag: 'rsi-alert-' + level,
         requireInteraction: true,
         silent: false,
-        vibrate: [300, 100, 300],
-        renotify: true
+        vibrate: [1000, 500, 1000, 500, 1000],
+        renotify: true,
+        icon: '/favicon.ico',
+        badge: '/favicon.ico'
       });
 
       currentNotification.onclick = function () {
@@ -527,6 +541,7 @@ function showRSIAlert(level) {
         this.close();
         stopAlertSound();
         currentNotification = null;
+        lastAlertLevel = null;
       };
 
       currentNotification.onclose = function () {
@@ -536,9 +551,11 @@ function showRSIAlert(level) {
 
       currentNotification.onerror = function (e) {
         console.error('Errore notifica:', e);
+        playAlertSound();
       };
     } catch (e) {
       console.error('Errore creazione notifica:', e);
+      playAlertSound();
     }
   } else {
     console.log('Notifiche non permesse. Stato:', Notification.permission);
@@ -2058,7 +2075,7 @@ function drawPatternTable(ctx, x, y, width, height) {
     ctx.fillStyle = 'rgba(34, 197, 94, 0.8)';
     ctx.fillRect(tableX + 20, tableY + height - 35, 50, 25);
 
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+ctxstrokeStyle = 'rgba(225, 225, 225, 0.5)';
     ctx.lineWidth = 1;
     ctx.strokeRect(tableX + 20, tableY + height - 35, 50, 25);
 
@@ -2305,7 +2322,7 @@ function drawChart() {
       if (pattern15mDirection) {
         var arrowY15m = y - rad - 15;
         ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
         ctx.lineWidth = 2;
         ctx.globalAlpha = 0.6;
 
@@ -2332,114 +2349,133 @@ function drawChart() {
         var arrowY = y + rad + 15;
         ctx.fillStyle = '#FFFFFF';
         ctx.strokeStyle = '#FFFFFF';
-               ctx.lineWidth = 2;
+        ctx.lineWidth = 2;
         ctx.globalAlpha = 0.8;
-    if (patternDirection === 'up') {
-      ctx.beginPath();
-      ctx.moveTo(x, arrowY - arrowSize);
-      ctx.lineTo(x - arrowSize / 2, arrowY);
-      ctx.lineTo(x + arrowSize / 2, arrowY);
-      ctx.closePath();
-      ctx.fill();
-    } else if (patternDirection === 'down') {
-      ctx.beginPath();
-      ctx.moveTo(x, arrowY + arrowSize);
-      ctx.lineTo(x - arrowSize / 2, arrowY);
-      ctx.lineTo(x + arrowSize / 2, arrowY);
-      ctx.closePath();
-      ctx.fill();
-    }
 
-    ctx.globalAlpha = 1;
+        if (patternDirection === 'up') {
+          ctx.beginPath();
+          ctx.moveTo(x, arrowY - arrowSize);
+          ctx.lineTo(x - arrowSize / 2, arrowY);
+          ctx.lineTo(x + arrowSize / 2, arrowY);
+          ctx.closePath();
+          ctx.fill();
+        } else if (patternDirection === 'down') {
+          ctx.beginPath();
+          ctx.moveTo(x, arrowY + arrowSize);
+          ctx.lineTo(x - arrowSize / 2, arrowY);
+          ctx.lineTo(x + arrowSize / 2, arrowY);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+
+  rsiLevelMarkers.forEach(function (marker) {
+    var mx = marker.candleIndex * spc + spc / 2 + offsetX;
+    var my = p2y(marker.price);
+
+    if (mx >= 0 && mx <= chartWidth && my >= 0 && my <= h) {
+      var rad = Math.min(candW * 0.35, 3.5);
+      ctx.fillStyle = '#FFB6C1';
+      ctx.strokeStyle = '#FF69B4';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(mx, my, rad, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+    }
+  });
+
+  if (currentPrice !== null && candles.length > 0) {
+    var li2 = candles.length - 1;
+    var px = li2 * spc + spc / 2 + offsetX;
+    var py = p2y(currentPrice);
+
+    if (px >= 0 && px <= chartWidth && py >= 0 && py <= h) {
+      var rad = Math.min(candW * 0.35, 3.5);
+      ctx.fillStyle = '#FFD700';
+      ctx.strokeStyle = '#FFA500';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(px, py, rad, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(chartWidth, 0, psw, h);
+
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(chartWidth, 0);
+  ctx.lineTo(chartWidth, h);
+  ctx.stroke();
+
+  ctx.fillStyle = '#888';
+  ctx.font = '11px Arial';
+  ctx.textAlign = 'left';
+
+  for (var i = 0; i <= 8; i++) {
+    var pr = vminP + (vrng / 8) * i;
+    var yy = h - (h / 8) * i;
+
+    ctx.strokeStyle = '#333';
+    ctx.setLineDash([2, 2]);
+    ctx.beginPath();
+    ctx.moveTo(chartWidth - 5, yy);
+    ctx.lineTo(chartWidth, yy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = '#fff';
+    ctx.fillText('$' + pr.toFixed(2), chartWidth + 5, yy + 4);
+  }
+
+  drawTimer(ctx, w - 75, 50);
+  drawSCGLabel(ctx, w / 2 - 60, 50);
+  drawRSI(ctx, 80, 100);
+
+  var tableWidth = 90;
+  var tableHeight = 120;
+  var tableX = w - tableWidth;
+  var tableY = 100;
+  drawPatternTable(ctx, tableX, tableY, tableWidth, tableHeight);
+}
+
+async function updateCurrentPrice() {
+  if (isUpdating) return;
+
+  try {
+    await fetchCurrentPrice();
+    await fetchRSIData();
+
+    if (currentPrice !== null) {
+      updateUI();
+      drawChart();
+    }
+  } catch (e) {
+    console.error(e);
   }
 }
-}
-rsiLevelMarkers.forEach(function (marker) {
-var mx = marker.candleIndex * spc + spc / 2 + offsetX;
-var my = p2y(marker.price);
-if (mx >= 0 && mx <= chartWidth && my >= 0 && my <= h) {
-  var rad = Math.min(candW * 0.35, 3.5);
-  ctx.fillStyle = '#FFB6C1';
-  ctx.strokeStyle = '#FF69B4';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.arc(mx, my, rad, 0, 2 * Math.PI);
-  ctx.fill();
-  ctx.stroke();
-}
-});
-if (currentPrice !== null && candles.length > 0) {
-var li2 = candles.length - 1;
-var px = li2 * spc + spc / 2 + offsetX;
-var py = p2y(currentPrice);
-if (px >= 0 && px <= chartWidth && py >= 0 && py <= h) {
-  var rad = Math.min(candW * 0.35, 3.5);
-  ctx.fillStyle = '#FFD700';
-  ctx.strokeStyle = '#FFA500';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.arc(px, py, rad, 0, 2 * Math.PI);
-  ctx.fill();
-  ctx.stroke();
-}
-}
-ctx.fillStyle = '#1a1a1a';
-ctx.fillRect(chartWidth, 0, psw, h);
-ctx.strokeStyle = '#333';
-ctx.lineWidth = 1;
-ctx.beginPath();
-ctx.moveTo(chartWidth, 0);
-ctx.lineTo(chartWidth, h);
-ctx.stroke();
-ctx.fillStyle = '#888';
-ctx.font = '11px Arial';
-ctx.textAlign = 'left';
-for (var i = 0; i <= 8; i++) {
-var pr = vminP + (vrng / 8) * i;
-var yy = h - (h / 8) * i;
-ctx.strokeStyle = '#333';
-ctx.setLineDash([2, 2]);
-ctx.beginPath();
-ctx.moveTo(chartWidth - 5, yy);
-ctx.lineTo(chartWidth, yy);
-ctx.stroke();
-ctx.setLineDash([]);
 
-ctx.fillStyle = '#fff';
-ctx.fillText('$' + pr.toFixed(2), chartWidth + 5, yy + 4);
-}
-drawTimer(ctx, w - 75, 50);
-drawSCGLabel(ctx, w / 2 - 60, 50);
-drawRSI(ctx, 80, 100);
-var tableWidth = 90;
-var tableHeight = 120;
-var tableX = w - tableWidth;
-var tableY = 100;
-drawPatternTable(ctx, tableX, tableY, tableWidth, tableHeight);
-}
-async function updateCurrentPrice() {
-if (isUpdating) return;
-try {
-await fetchCurrentPrice();
-await fetchRSIData();
-if (currentPrice !== null) {
-  updateUI();
-  drawChart();
-}
-} catch (e) {
-console.error(e);
-}
-}
 window.addEventListener('load', function () {
-setTimeout(fetchData, 500);
+  setTimeout(fetchData, 500);
 });
+
 setInterval(fetchData, 120000);
 setInterval(updateCurrentPrice, 2000);
+
 window.addEventListener('resize', function () {
-if (candles.length > 0) {
-drawChart();
-}
+  if (candles.length > 0) {
+    drawChart();
+  }
 });
+
 document.addEventListener('DOMContentLoaded', function () {
-showNotificationOverlay();
+  showNotificationOverlay();
 });
