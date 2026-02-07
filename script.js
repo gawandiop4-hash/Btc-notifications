@@ -1,4 +1,3 @@
-
 let candles = [];
 let trendlines = [];
 let supportResistanceLevels = [];
@@ -36,7 +35,8 @@ let slowMA = [];
 let volumeProfileLines = [];
 let wakeLock = null;
 let keepAliveVideo = null;
-let audioPlaying = false;
+let audioContext = null;
+let backgroundCheckInterval = null;
 
 const CHART_API = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=280';
 const RSI_API = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=30m&limit=100';
@@ -127,7 +127,8 @@ async function requestWakeLock() {
     if ('wakeLock' in navigator) {
       wakeLock = await navigator.wakeLock.request('screen');
       wakeLock.addEventListener('release', function () {
-        console.log('Wake Lock rilasciato');
+        console.log('Wake Lock rilasciato, tento di riacquisirlo');
+        setTimeout(requestWakeLock, 1000);
       });
       console.log('Wake Lock attivato');
       return true;
@@ -140,16 +141,43 @@ async function requestWakeLock() {
 }
 
 document.addEventListener('visibilitychange', async function () {
-  if (document.visibilityState === 'visible') {
+  console.log('Visibility changed:', document.visibilityState);
+  
+  if (document.visibilityState === 'hidden') {
+    console.log('App in background - continuo monitoraggio RSI');
+    startBackgroundMonitoring();
+  } else {
+    console.log('App in foreground');
+    stopBackgroundMonitoring();
+    
     if (wakeLock === null && !keepAliveVideo) {
       await requestWakeLock();
     }
-    
-    if (audioPlaying && !alertAudio) {
-      playAlertSound();
-    }
   }
 });
+
+function startBackgroundMonitoring() {
+  if (backgroundCheckInterval) return;
+  
+  console.log('Avvio monitoraggio background');
+  
+  backgroundCheckInterval = setInterval(async function() {
+    try {
+      await fetchRSIData();
+      console.log('Background check - RSI:', rsiValue);
+    } catch (e) {
+      console.error('Errore background check:', e);
+    }
+  }, 30000);
+}
+
+function stopBackgroundMonitoring() {
+  if (backgroundCheckInterval) {
+    clearInterval(backgroundCheckInterval);
+    backgroundCheckInterval = null;
+    console.log('Stop monitoraggio background');
+  }
+}
 
 function showNotificationOverlay() {
   if (!('Notification' in window)) return;
@@ -189,11 +217,18 @@ function enableNotifications() {
 
 function showTestNotification() {
   if (Notification.permission === 'granted') {
-    new Notification('Sistema Notifiche Attivo', {
+    var notification = new Notification('Sistema Notifiche Attivo', {
       body: 'Le notifiche sono state abilitate correttamente',
-      silent: false,
-      requireInteraction: false
+      icon: '/favicon.ico',
+      badge: '/favicon.ico',
+      tag: 'test-notification',
+      requireInteraction: false,
+      silent: false
     });
+    
+    setTimeout(function() {
+      notification.close();
+    }, 5000);
   }
 }
 
@@ -435,7 +470,10 @@ function updateVolumeProfileLines() {
 
 function createAlertSound() {
   try {
-    var audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    if (!audioContext) {
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    
     var oscillator = audioContext.createOscillator();
     var gainNode = audioContext.createGain();
 
@@ -443,7 +481,7 @@ function createAlertSound() {
     gainNode.connect(audioContext.destination);
     oscillator.frequency.value = 800;
     oscillator.type = 'square';
-    gainNode.gain.value = 0.5;
+    gainNode.gain.value = 1.0;
 
     return {
       audioContext: audioContext,
@@ -457,33 +495,37 @@ function createAlertSound() {
 }
 
 function playAlertSound() {
-  if (alertAudio) {
-    stopAlertSound();
-  }
-
-  alertAudio = createAlertSound();
-  if (!alertAudio) return;
-
-  audioPlaying = true;
-  alertAudio.oscillator.start();
-  var toggle = true;
-
-  alertAudio.interval = setInterval(function () {
-    if (alertAudio && alertAudio.oscillator) {
-      alertAudio.oscillator.frequency.value = toggle ? 800 : 1000;
-      toggle = !toggle;
+  try {
+    if (alertAudio) {
+      stopAlertSound();
     }
-  }, 300);
+
+    alertAudio = createAlertSound();
+    if (!alertAudio) return;
+
+    if (audioContext && audioContext.state === 'suspended') {
+      audioContext.resume();
+    }
+
+    alertAudio.oscillator.start();
+    var toggle = true;
+
+    alertAudio.interval = setInterval(function () {
+      if (alertAudio && alertAudio.oscillator) {
+        alertAudio.oscillator.frequency.value = toggle ? 800 : 1000;
+        toggle = !toggle;
+      }
+    }, 300);
+  } catch (e) {
+    console.error('Errore playAlertSound:', e);
+  }
 }
 
 function stopAlertSound() {
-  audioPlaying = false;
-  
   if (alertAudio) {
     try {
       clearInterval(alertAudio.interval);
       alertAudio.oscillator.stop();
-      alertAudio.audioContext.close();
     } catch (e) {
       console.log('Audio gia fermato');
     }
@@ -517,26 +559,36 @@ function showRSIAlert(level) {
     icon = String.fromCodePoint(0x1F7E2);
   }
 
+  console.log('Tentativo notifica RSI:', level, 'Permission:', Notification.permission);
+
   if ('Notification' in window && Notification.permission === 'granted') {
-    playAlertSound();
-
-    if (currentNotification) {
-      currentNotification.close();
-    }
-
     try {
-      currentNotification = new Notification(title, {
+      playAlertSound();
+
+      if (currentNotification) {
+        currentNotification.close();
+      }
+
+      var notificationOptions = {
         body: body,
-        tag: 'rsi-alert-' + level,
+        icon: '/favicon.ico',
+        badge: '/favicon.ico',
+        tag: 'rsi-alert',
+        renotify: true,
         requireInteraction: true,
         silent: false,
-        vibrate: [1000, 500, 1000, 500, 1000],
-        renotify: true,
-        icon: '/favicon.ico',
-        badge: '/favicon.ico'
-      });
+        vibrate: [500, 250, 500, 250, 500, 250, 500],
+        timestamp: Date.now(),
+        data: {
+          level: level,
+          time: new Date().toISOString()
+        }
+      };
+
+      currentNotification = new Notification(title, notificationOptions);
 
       currentNotification.onclick = function () {
+        console.log('Notifica cliccata');
         window.focus();
         this.close();
         stopAlertSound();
@@ -545,20 +597,27 @@ function showRSIAlert(level) {
       };
 
       currentNotification.onclose = function () {
+        console.log('Notifica chiusa');
         stopAlertSound();
         currentNotification = null;
       };
 
       currentNotification.onerror = function (e) {
         console.error('Errore notifica:', e);
-        playAlertSound();
       };
+
+      currentNotification.onshow = function() {
+        console.log('Notifica mostrata con successo');
+      };
+
+      console.log('Notifica creata con successo');
+
     } catch (e) {
       console.error('Errore creazione notifica:', e);
       playAlertSound();
     }
   } else {
-    console.log('Notifiche non permesse. Stato:', Notification.permission);
+    console.log('Notifiche non permesse. Stato:', Notification ? Notification.permission : 'Non supportato');
   }
 }
 
@@ -566,6 +625,7 @@ function checkRSIAlert() {
   for (var i = 0; i < RSI_TARGET_LEVELS.length; i++) {
     var level = RSI_TARGET_LEVELS[i];
     if (Math.abs(rsiValue - level) <= 0.5) {
+      console.log('RSI Alert triggered! Level:', level, 'Current RSI:', rsiValue);
       showRSIAlert(level);
       break;
     }
@@ -714,6 +774,8 @@ async function fetchRSIData() {
 
       var oldRSI = rsiValue;
       rsiValue = calculateRSI(closes, 14);
+
+      console.log('RSI aggiornato:', rsiValue);
 
       if (Math.abs(oldRSI - rsiValue) > 0.1) {
         checkRSIAlert();
@@ -2075,7 +2137,7 @@ function drawPatternTable(ctx, x, y, width, height) {
     ctx.fillStyle = 'rgba(34, 197, 94, 0.8)';
     ctx.fillRect(tableX + 20, tableY + height - 35, 50, 25);
 
-ctxstrokeStyle = 'rgba(225, 225, 225, 0.5)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
     ctx.lineWidth = 1;
     ctx.strokeRect(tableX + 20, tableY + height - 35, 50, 25);
 
@@ -2156,7 +2218,8 @@ function drawChart() {
 
   ctx.strokeStyle = borderColor;
   ctx.lineWidth = borderWidth;
-  ctx.setLineDash([]);
+  
+ctx.setLineDash([]);
   ctx.strokeRect(0, 0, chartWidth, h);
 
   ctx.strokeStyle = '#333';
@@ -2278,204 +2341,193 @@ function drawChart() {
       ctx.setLineDash(tl.isFalseBreakout ? [5, 5] : []);
       ctx.beginPath();
       ctx.moveTo(x1, y1);
-      ctx.lineTo(xe, ye);
-      ctx.stroke();
+ctx.lineTo(xe, ye);
+ctx.stroke();
+}
+});
+ctx.setLineDash([]);
+ctx.lineWidth = 1;
+candles.forEach(function (c, i) {
+var x = i * spc + spc / 2 + offsetX;
+if (x < -spc || x > chartWidth + spc) return;
+var yh = p2y(c.high);
+var yl = p2y(c.low);
+var yo = p2y(c.open);
+var yc = p2y(c.close);
+
+var color = c.isBullish ? '#22c55e' : '#ef4444';
+var bodyTop = Math.min(yo, yc);
+var bodyHeight = Math.abs(yc - yo);
+
+ctx.strokeStyle = color;
+ctx.fillStyle = color;
+
+ctx.beginPath();
+ctx.moveTo(x, yh);
+ctx.lineTo(x, yl);
+ctx.stroke();
+
+ctx.fillRect(x - candW / 2, bodyTop, candW, Math.max(bodyHeight, 1));
+
+});
+if (currentPrice !== null && candles.length > 0) {
+var li = candles.length - 1;
+var x = li * spc + spc / 2 + offsetX;
+var y = p2y(currentPrice);
+if (x >= 0 && x <= chartWidth && y >= 0 && y <= h) {
+  var arrowSize = 12;
+  var rad = Math.min(candW * 0.35, 3.5);
+
+  if (pattern15mDirection) {
+    var arrowY15m = y - rad - 15;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.6;
+
+    if (pattern15mDirection === 'up') {
+      ctx.beginPath();
+      ctx.moveTo(x, arrowY15m - arrowSize);
+      ctx.lineTo(x - arrowSize / 2, arrowY15m);
+      ctx.lineTo(x + arrowSize / 2, arrowY15m);
+      ctx.closePath();
+      ctx.fill();
+    } else if (pattern15mDirection === 'down') {
+      ctx.beginPath();
+      ctx.moveTo(x, arrowY15m + arrowSize);
+      ctx.lineTo(x - arrowSize / 2, arrowY15m);
+      ctx.lineTo(x + arrowSize / 2, arrowY15m);
+      ctx.closePath();
+      ctx.fill();
     }
-  });
 
-  ctx.setLineDash([]);
-  ctx.lineWidth = 1;
-
-  candles.forEach(function (c, i) {
-    var x = i * spc + spc / 2 + offsetX;
-    if (x < -spc || x > chartWidth + spc) return;
-
-    var yh = p2y(c.high);
-    var yl = p2y(c.low);
-    var yo = p2y(c.open);
-    var yc = p2y(c.close);
-
-    var color = c.isBullish ? '#22c55e' : '#ef4444';
-    var bodyTop = Math.min(yo, yc);
-    var bodyHeight = Math.abs(yc - yo);
-
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-
-    ctx.beginPath();
-    ctx.moveTo(x, yh);
-    ctx.lineTo(x, yl);
-    ctx.stroke();
-
-    ctx.fillRect(x - candW / 2, bodyTop, candW, Math.max(bodyHeight, 1));
-  });
-
-  if (currentPrice !== null && candles.length > 0) {
-    var li = candles.length - 1;
-    var x = li * spc + spc / 2 + offsetX;
-    var y = p2y(currentPrice);
-
-    if (x >= 0 && x <= chartWidth && y >= 0 && y <= h) {
-      var arrowSize = 12;
-      var rad = Math.min(candW * 0.35, 3.5);
-
-      if (pattern15mDirection) {
-        var arrowY15m = y - rad - 15;
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-        ctx.lineWidth = 2;
-        ctx.globalAlpha = 0.6;
-
-        if (pattern15mDirection === 'up') {
-          ctx.beginPath();
-          ctx.moveTo(x, arrowY15m - arrowSize);
-          ctx.lineTo(x - arrowSize / 2, arrowY15m);
-          ctx.lineTo(x + arrowSize / 2, arrowY15m);
-          ctx.closePath();
-          ctx.fill();
-        } else if (pattern15mDirection === 'down') {
-          ctx.beginPath();
-          ctx.moveTo(x, arrowY15m + arrowSize);
-          ctx.lineTo(x - arrowSize / 2, arrowY15m);
-          ctx.lineTo(x + arrowSize / 2, arrowY15m);
-          ctx.closePath();
-          ctx.fill();
-        }
-
-        ctx.globalAlpha = 1;
-      }
-
-      if (patternDirection) {
-        var arrowY = y + rad + 15;
-        ctx.fillStyle = '#FFFFFF';
-        ctx.strokeStyle = '#FFFFFF';
-        ctx.lineWidth = 2;
-        ctx.globalAlpha = 0.8;
-
-        if (patternDirection === 'up') {
-          ctx.beginPath();
-          ctx.moveTo(x, arrowY - arrowSize);
-          ctx.lineTo(x - arrowSize / 2, arrowY);
-          ctx.lineTo(x + arrowSize / 2, arrowY);
-          ctx.closePath();
-          ctx.fill();
-        } else if (patternDirection === 'down') {
-          ctx.beginPath();
-          ctx.moveTo(x, arrowY + arrowSize);
-          ctx.lineTo(x - arrowSize / 2, arrowY);
-          ctx.lineTo(x + arrowSize / 2, arrowY);
-          ctx.closePath();
-          ctx.fill();
-        }
-
-        ctx.globalAlpha = 1;
-      }
-    }
+    ctx.globalAlpha = 1;
   }
 
-  rsiLevelMarkers.forEach(function (marker) {
-    var mx = marker.candleIndex * spc + spc / 2 + offsetX;
-    var my = p2y(marker.price);
+  if (patternDirection) {
+    var arrowY = y + rad + 15;
+    ctx.fillStyle = '#FFFFFF';
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.8;
 
-    if (mx >= 0 && mx <= chartWidth && my >= 0 && my <= h) {
-      var rad = Math.min(candW * 0.35, 3.5);
-      ctx.fillStyle = '#FFB6C1';
-      ctx.strokeStyle = '#FF69B4';
-      ctx.lineWidth = 1;
+    if (patternDirection === 'up') {
       ctx.beginPath();
-      ctx.arc(mx, my, rad, 0, 2 * Math.PI);
+      ctx.moveTo(x, arrowY - arrowSize);
+      ctx.lineTo(x - arrowSize / 2, arrowY);
+      ctx.lineTo(x + arrowSize / 2, arrowY);
+      ctx.closePath();
       ctx.fill();
-      ctx.stroke();
-    }
-  });
-
-  if (currentPrice !== null && candles.length > 0) {
-    var li2 = candles.length - 1;
-    var px = li2 * spc + spc / 2 + offsetX;
-    var py = p2y(currentPrice);
-
-    if (px >= 0 && px <= chartWidth && py >= 0 && py <= h) {
-      var rad = Math.min(candW * 0.35, 3.5);
-      ctx.fillStyle = '#FFD700';
-      ctx.strokeStyle = '#FFA500';
-      ctx.lineWidth = 1;
+    } else if (patternDirection === 'down') {
       ctx.beginPath();
-      ctx.arc(px, py, rad, 0, 2 * Math.PI);
+      ctx.moveTo(x, arrowY + arrowSize);
+      ctx.lineTo(x - arrowSize / 2, arrowY);
+      ctx.lineTo(x + arrowSize / 2, arrowY);
+      ctx.closePath();
       ctx.fill();
-      ctx.stroke();
     }
+
+    ctx.globalAlpha = 1;
   }
+}
+}
+rsiLevelMarkers.forEach(function (marker) {
+var mx = marker.candleIndex * spc + spc / 2 + offsetX;
+var my = p2y(marker.price);
 
-  ctx.fillStyle = '#1a1a1a';
-  ctx.fillRect(chartWidth, 0, psw, h);
-
-  ctx.strokeStyle = '#333';
+if (mx >= 0 && mx <= chartWidth && my >= 0 && my <= h) {
+  var rad = Math.min(candW * 0.35, 3.5);
+  ctx.fillStyle = '#FFB6C1';
+  ctx.strokeStyle = '#FF69B4';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(chartWidth, 0);
-  ctx.lineTo(chartWidth, h);
+  ctx.arc(mx, my, rad, 0, 2 * Math.PI);
+  ctx.fill();
   ctx.stroke();
-
-  ctx.fillStyle = '#888';
-  ctx.font = '11px Arial';
-  ctx.textAlign = 'left';
-
-  for (var i = 0; i <= 8; i++) {
-    var pr = vminP + (vrng / 8) * i;
-    var yy = h - (h / 8) * i;
-
-    ctx.strokeStyle = '#333';
-    ctx.setLineDash([2, 2]);
-    ctx.beginPath();
-    ctx.moveTo(chartWidth - 5, yy);
-    ctx.lineTo(chartWidth, yy);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    ctx.fillStyle = '#fff';
-    ctx.fillText('$' + pr.toFixed(2), chartWidth + 5, yy + 4);
-  }
-
-  drawTimer(ctx, w - 75, 50);
-  drawSCGLabel(ctx, w / 2 - 60, 50);
-  drawRSI(ctx, 80, 100);
-
-  var tableWidth = 90;
-  var tableHeight = 120;
-  var tableX = w - tableWidth;
-  var tableY = 100;
-  drawPatternTable(ctx, tableX, tableY, tableWidth, tableHeight);
 }
-
-async function updateCurrentPrice() {
-  if (isUpdating) return;
-
-  try {
-    await fetchCurrentPrice();
-    await fetchRSIData();
-
-    if (currentPrice !== null) {
-      updateUI();
-      drawChart();
-    }
-  } catch (e) {
-    console.error(e);
-  }
-}
-
-window.addEventListener('load', function () {
-  setTimeout(fetchData, 500);
 });
+if (currentPrice !== null && candles.length > 0) {
+var li2 = candles.length - 1;
+var px = li2 * spc + spc / 2 + offsetX;
+var py = p2y(currentPrice);
 
+if (px >= 0 && px <= chartWidth && py >= 0 && py <= h) {
+  var rad = Math.min(candW * 0.35, 3.5);
+  ctx.fillStyle = '#FFD700';
+  ctx.strokeStyle = '#FFA500';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(px, py, rad, 0, 2 * Math.PI);
+  ctx.fill();
+  ctx.stroke();
+}
+}
+ctx.fillStyle = '#1a1a1a';
+ctx.fillRect(chartWidth, 0, psw, h);
+ctx.strokeStyle = '#333';
+ctx.lineWidth = 1;
+ctx.beginPath();
+ctx.moveTo(chartWidth, 0);
+ctx.lineTo(chartWidth, h);
+ctx.stroke();
+ctx.fillStyle = '#888';
+ctx.font = '11px Arial';
+ctx.textAlign = 'left';
+for (var i = 0; i <= 8; i++) {
+var pr = vminP + (vrng / 8) * i;
+var yy = h - (h / 8) * i;
+
+ctx.strokeStyle = '#333';
+ctx.setLineDash([2, 2]);
+ctx.beginPath();
+ctx.moveTo(chartWidth - 5, yy);
+ctx.lineTo(chartWidth, yy);
+ctx.stroke();
+ctx.setLineDash([]);
+
+ctx.fillStyle = '#fff';
+ctx.fillText('$' + pr.toFixed(2), chartWidth + 5, yy + 4);
+}
+drawTimer(ctx, w - 75, 50);
+drawSCGLabel(ctx, w / 2 - 60, 50);
+drawRSI(ctx, 80, 100);
+var tableWidth = 90;
+var tableHeight = 120;
+var tableX = w - tableWidth;
+var tableY = 100;
+drawPatternTable(ctx, tableX, tableY, tableWidth, tableHeight);
+}
+async function updateCurrentPrice() {
+if (isUpdating) return;
+try {
+await fetchCurrentPrice();
+await fetchRSIData();
+if (currentPrice !== null) {
+  updateUI();
+  drawChart();
+}
+
+} catch (e) {
+console.error(e);
+}
+}
+window.addEventListener('load', function () {
+console.log('App caricata');
+setTimeout(fetchData, 500);
+});
 setInterval(fetchData, 120000);
 setInterval(updateCurrentPrice, 2000);
-
 window.addEventListener('resize', function () {
-  if (candles.length > 0) {
-    drawChart();
-  }
+if (candles.length > 0) {
+drawChart();
+}
 });
-
 document.addEventListener('DOMContentLoaded', function () {
-  showNotificationOverlay();
+console.log('DOM caricato');
+showNotificationOverlay();
 });
+document.addEventListener('click', function() {
+if (audioContext && audioContext.state === 'suspended') {
+audioContext.resume();
+}
+}, { once: true });
