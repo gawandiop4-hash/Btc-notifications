@@ -709,26 +709,25 @@ function checkRSILevelTouch(price) {
     var level = RSI_TARGET_LEVELS[i];
 
     if (Math.abs(rsiValue - level) <= 0.5) {
-      var candleIndex = candles.length - 1;
-      
-      var markersInCandle = rsiLevelMarkers.filter(function(m) {
-        return m.candleIndex === candleIndex;
-      }).length;
-      
       var exists = rsiLevelMarkers.some(function (m) {
-        return Math.abs(m.price - price) < 1 && m.candleIndex === candleIndex;
+        return Math.abs(m.price - price) < 1 && m.candleIndex === candles.length - 1;
       });
 
       if (!exists) {
         rsiLevelMarkers.push({
           price: price,
-          candleIndex: candleIndex,
+          candleIndex: candles.length - 1,
           candleTime: lastCandle.time.getTime(),
           rsiLevel: level,
-          hasLine: false,
-          markerIndexInCandle: markersInCandle
+          hasLine: false
         });
         saveRSIMarkers();
+        
+        console.log('Nuovo marker RSI creato:', {
+          price: price,
+          candleIndex: candles.length - 1,
+          rsiLevel: level
+        });
       }
     }
   }
@@ -2444,17 +2443,7 @@ function drawChart() {
 
   rsiLevelMarkers.forEach(function (marker) {
     var candleIndex = marker.candleIndex;
-    
-    var candleMarkersCount = rsiLevelMarkers.filter(function(m) {
-      return m.candleIndex === candleIndex;
-    }).length;
-    
-    var markerPos = marker.markerIndexInCandle || 0;
-    
-    var offsetFactor = candleMarkersCount > 1 ? (markerPos / (candleMarkersCount - 1)) - 0.5 : 0;
-    var horizontalOffset = offsetFactor * candW * 0.7;
-    
-    var mx = candleIndex * spc + spc / 2 + offsetX + horizontalOffset;
+    var mx = candleIndex * spc + spc / 2 + offsetX;
     var my = p2y(marker.price);
 
     if (mx >= 0 && mx <= chartWidth && my >= 0 && my <= h) {
@@ -2567,4 +2556,3 @@ document.addEventListener('click', function() {
     audioContext.resume();
   }
 }, { once: true });
-       
