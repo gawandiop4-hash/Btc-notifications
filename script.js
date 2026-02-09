@@ -709,15 +709,16 @@ function checkRSILevelTouch(price) {
     var level = RSI_TARGET_LEVELS[i];
 
     if (Math.abs(rsiValue - level) <= 0.5) {
+      var candleTime = lastCandle.time.getTime();
+      
       var exists = rsiLevelMarkers.some(function (m) {
-        return Math.abs(m.price - price) < 1 && m.candleIndex === candles.length - 1;
+        return Math.abs(m.price - price) < 1 && m.candleTime === candleTime;
       });
 
       if (!exists) {
         rsiLevelMarkers.push({
           price: price,
-          candleIndex: candles.length - 1,
-          candleTime: lastCandle.time.getTime(),
+          candleTime: candleTime,
           rsiLevel: level,
           hasLine: false
         });
@@ -725,7 +726,7 @@ function checkRSILevelTouch(price) {
         
         console.log('Nuovo marker RSI creato:', {
           price: price,
-          candleIndex: candles.length - 1,
+          candleTime: new Date(candleTime).toISOString(),
           rsiLevel: level
         });
       }
@@ -1832,8 +1833,8 @@ function handleCanvasClick(e) {
 
   for (var mi = 0; mi < rsiLevelMarkers.length; mi++) {
     var marker = rsiLevelMarkers[mi];
+    
     var candleIndex = -1;
-
     for (var ci = 0; ci < candles.length; ci++) {
       if (candles[ci].time.getTime() === marker.candleTime) {
         candleIndex = ci;
@@ -2399,14 +2400,7 @@ function drawChart() {
           ctx.moveTo(x, arrowY15m - arrowSize);
           ctx.lineTo(x - arrowSize / 2, arrowY15m);
           ctx.lineTo(x + arrowSize / 2, arrowY15m);
-          ctx.closePath();
-          ctx.fill();
-        } else if (pattern15mDirection === 'down') {
-          ctx.beginPath();
-          ctx.moveTo(x, arrowY15m + arrowSize);
-          ctx.lineTo(x - arrowSize / 2, arrowY15m);
-          ctx.lineTo(x + arrowSize / 2, arrowY15m);
-          ctx.closePath();
+  ctx.closePath();
           ctx.fill();
         }
 
@@ -2442,7 +2436,17 @@ function drawChart() {
   }
 
   rsiLevelMarkers.forEach(function (marker) {
-    var candleIndex = marker.candleIndex;
+    var candleIndex = -1;
+    
+    for (var ci = 0; ci < candles.length; ci++) {
+      if (candles[ci].time.getTime() === marker.candleTime) {
+        candleIndex = ci;
+        break;
+      }
+    }
+    
+    if (candleIndex === -1) return;
+    
     var mx = candleIndex * spc + spc / 2 + offsetX;
     var my = p2y(marker.price);
 
