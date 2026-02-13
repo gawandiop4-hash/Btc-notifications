@@ -37,9 +37,11 @@ let wakeLock = null;
 let keepAliveVideo = null;
 let audioContext = null;
 let backgroundCheckInterval = null;
+let historicalRSIData = [];
 
 const CHART_API = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=280';
 const RSI_API = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=30m&limit=100';
+const HISTORICAL_RSI_API = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=30m&limit=1000';
 const PATTERN_API = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=55';
 const PATTERN_15M_API = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=20';
 const FAST_MA_PERIOD = 10;
@@ -768,6 +770,98 @@ function calculateRSI(prices, period) {
 
   if (al === 0) return 100;
   return 100 - (100 / (1 + ag / al));
+}
+
+function calculateRSIAtIndex(prices, period, index) {
+  if (index < period) return null;
+  
+  var slice = prices.slice(0, index + 1);
+  return calculateRSI(slice, period);
+}
+
+async function fetchHistoricalRSIData() {
+  try {
+    console.log('Scaricando dati RSI storici...');
+    var r = await fetch(HISTORICAL_RSI_API);
+    if (r.ok) {
+      var d = await r.json();
+      
+      historicalRSIData = d.map(function(c) {
+        return {
+          time: new Date(c[0]),
+          close: parseFloat(c[4]),
+          high: parseFloat(c[2]),
+          low: parseFloat(c[3])
+        };
+      });
+      
+      console.log('Dati RSI storici scaricati:', historicalRSIData.length, 'candele');
+    }
+  } catch (e) {
+    console.error('Errore scaricamento RSI storico:', e);
+  }
+}
+
+function analyzeHistoricalRSI() {
+  if (historicalRSIData.length === 0 || candles.length === 0) return;
+  
+  console.log('Analisi RSI storico in corso...');
+  
+  var closes = historicalRSIData.map(function(c) { return c.close; });
+  var newMarkers = [];
+  
+  for (var i = 14; i < historicalRSIData.length; i++) {
+    var rsi = calculateRSIAtIndex(closes, 14, i);
+    if (rsi === null) continue;
+    
+    var candleTime30m = historicalRSIData[i].time.getTime();
+    var candleTime1h = Math.floor(candleTime30m / 3600000) * 3600000;
+    
+    var matchingCandle = candles.find(function(c) {
+      return c.time.getTime() === candleTime1h;
+    });
+    
+    if (!matchingCandle) continue;
+    
+    for (var j = 0; j < RSI_TARGET_LEVELS.length; j++) {
+      var level = RSI_TARGET_LEVELS[j];
+      
+      if (Math.abs(rsi - level) <= 0.5) {
+        var price = historicalRSIData[i].close;
+        
+        var exists = newMarkers.some(function(m) {
+          return Math.abs(m.price - price) < 10 && m.candleTime === candleTime1h;
+        });
+        
+        if (!exists) {
+          newMarkers.push({
+            price: price,
+            candleTime: candleTime1h,
+            rsiLevel: level,
+            hasLine: false
+          });
+        }
+      }
+    }
+  }
+  
+  rsiLevelMarkers = rsiLevelMarkers.concat(newMarkers);
+  
+  rsiLevelMarkers = rsiLevelMarkers.filter(function(marker, index, self) {
+    return index === self.findIndex(function(m) {
+      return Math.abs(m.price - marker.price) < 10 && m.candleTime === marker.candleTime;
+    });
+  });
+  
+  var oldestCandleTime = candles[0].time.getTime();
+  rsiLevelMarkers = rsiLevelMarkers.filter(function (m) {
+    return m.candleTime >= oldestCandleTime;
+  });
+  
+  saveRSIMarkers();
+  
+  console.log('Analisi completata! Trovati', newMarkers.length, 'nuovi marker storici');
+  console.log('Totale marker RSI:', rsiLevelMarkers.length);
 }
 
 async function fetchRSIData() {
@@ -1584,6 +1678,11 @@ async function fetchData() {
       zoomLevel = 1;
 
       loadRSIMarkers();
+      
+      await fetchHistoricalRSIData();
+      
+      analyzeHistoricalRSI();
+      
       await requestWakeLock();
       initNotificationConsent();
       keepAlive();
@@ -2301,7 +2400,18 @@ function drawChart() {
 
     var y = p2y(marker.price);
     if (y >= 0 && y <= h) {
-      ctx.strokeStyle = '#87CEEB';
+      var candleIndex = -1;
+      for (var ci = 0; ci < candles.length; ci++) {
+        if (candles[ci].time.getTime() === marker.candleTime) {
+          candleIndex = ci;
+          break;
+        }
+      }
+      
+      if (candleIndex === -1) return;
+      
+      var isBullishCandle = candles[candleIndex].isBullish;
+      ctx.strokeStyle = isBullishCandle ? '#FFB6C1' : '#87CEEB';
       ctx.lineWidth = 0.5;
       ctx.setLineDash([5, 5]);
       ctx.beginPath();
@@ -2400,7 +2510,14 @@ function drawChart() {
           ctx.moveTo(x, arrowY15m - arrowSize);
           ctx.lineTo(x - arrowSize / 2, arrowY15m);
           ctx.lineTo(x + arrowSize / 2, arrowY15m);
-  ctx.closePath();
+          ctx.closePath();
+          ctx.fill();
+        } else if (pattern15mDirection === 'down') {
+          ctx.beginPath();
+          ctx.moveTo(x, arrowY15m + arrowSize);
+          ctx.lineTo(x - arrowSize / 2, arrowY15m);
+          ctx.lineTo(x + arrowSize / 2, arrowY15m);
+          ctx.closePath();
           ctx.fill();
         }
 
@@ -2452,8 +2569,17 @@ function drawChart() {
 
     if (mx >= 0 && mx <= chartWidth && my >= 0 && my <= h) {
       var rad = Math.min(candW * 0.21, 2.1);
-      ctx.fillStyle = '#87CEEB';
-      ctx.strokeStyle = '#4682B4';
+      
+      var isBullishCandle = candles[candleIndex].isBullish;
+      
+      if (isBullishCandle) {
+        ctx.fillStyle = '#FFB6C1';
+        ctx.strokeStyle = '#FF69B4';
+      } else {
+        ctx.fillStyle = '#87CEEB';
+        ctx.strokeStyle = '#4682B4';
+      }
+      
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.arc(mx, my, rad, 0, 2 * Math.PI);
