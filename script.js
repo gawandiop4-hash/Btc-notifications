@@ -39,7 +39,7 @@ let audioContext = null;
 let backgroundCheckInterval = null;
 let historicalRSIData = [];
 
-const CHART_API = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=280';
+const CHART_API = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=400';
 const RSI_API = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=30m&limit=100';
 const HISTORICAL_RSI_API = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=30m&limit=1000';
 const PATTERN_API = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=55';
